@@ -1,0 +1,349 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ──────────────────────────────────────────────────────────────
+// ENUMS
+// ──────────────────────────────────────────────────────────────
+
+enum Role {
+  SUPER_ADMIN
+  ADMIN
+  MANAGER
+  EMPLOYEE
+  AUDITOR
+}
+
+enum AssetCategory {
+  IT
+  OFFICE
+  SECURITY
+  FURNITURE
+  VEHICLE
+  NETWORK
+  SERVER
+  PRINTER
+  TERMINAL
+  OTHER
+}
+
+enum AssetStatus {
+  REGISTERED
+  ASSIGNED
+  IN_REPAIR
+  LOST
+  WRITTEN_OFF
+  IN_TRANSIT
+  PENDING_APPROVAL
+}
+
+enum AssetCondition {
+  NEW
+  GOOD
+  FAIR
+  POOR
+  DAMAGED
+  FOR_REPAIR
+}
+
+enum AssignmentStatus {
+  ACTIVE
+  RETURNED
+  OVERDUE
+  PENDING
+}
+
+enum MaintenanceType {
+  PREVENTIVE
+  CORRECTIVE
+  EMERGENCY
+  WARRANTY
+  UPGRADE
+}
+
+enum MaintenanceStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  ASSIGN
+  RETURN
+  STATUS_CHANGE
+  MAINTENANCE_ADD
+  MAINTENANCE_COMPLETE
+  VIEW_SENSITIVE
+  EXPORT_DATA
+  LOGIN
+  LOGOUT
+  FAILED_LOGIN
+}
+
+// ──────────────────────────────────────────────────────────────
+// MODELS
+// ──────────────────────────────────────────────────────────────
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  taxId     String?  @unique
+  address   String?
+  phone     String?
+  email     String?
+  logoUrl   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  departments Department[]
+  branches    Branch[]
+  users       User[]
+  assets      Asset[]
+
+  @@map("organizations")
+}
+
+model Branch {
+  id             String       @id @default(cuid())
+  name           String
+  code           String       @unique
+  address        String?
+  phone          String?
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  departments Department[]
+  users       User[]
+  assets      Asset[]
+  assignments AssetAssignment[]
+
+  @@map("branches")
+}
+
+model Department {
+  id             String       @id @default(cuid())
+  name           String
+  code           String?
+  budget         Float?
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  branchId       String?
+  branch         Branch?      @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  users       User[]
+  assets      Asset[]
+  assignments AssetAssignment[]
+
+  @@unique([organizationId, name])
+  @@map("departments")
+}
+
+model User {
+  id              String    @id @default(cuid())
+  email           String    @unique
+  employeeId      String    @unique
+  firstName       String
+  lastName        String
+  phone           String?
+  position        String?
+  role            Role      @default(EMPLOYEE)
+  password        String?
+  twoFactorSecret String?
+  lastLoginAt     DateTime?
+  loginAttempts   Int       @default(0)
+  lockedUntil     DateTime?
+  isActive        Boolean   @default(true)
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  departmentId   String?
+  department     Department?  @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  branchId       String?
+  branch         Branch?      @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  managerId      String?
+  manager        User?        @relation("UserManagement", fields: [managerId], references: [id], onDelete: SetNull)
+  subordinates   User[]       @relation("UserManagement")
+
+  assignments       AssetAssignment[] @relation("AssignmentUser")
+  createdAssignments AssetAssignment[] @relation("AssignmentCreator")
+  createdAssets     Asset[]           @relation("AssetCreator")
+  auditLogs         AuditLog[]
+  uploadedDocuments AssetDocument[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+  @@index([departmentId])
+  @@index([branchId])
+  @@map("users")
+}
+
+model Asset {
+  id           String   @id @default(cuid())
+  name         String
+  description  String?
+  assetTag     String   @unique
+  serialNumber String?  @unique
+  qrCode       String?  @unique
+  qrImage      String?
+
+  category    AssetCategory
+  subCategory String?
+  brand       String?
+  model       String?
+
+  purchaseDate  DateTime?
+  purchasePrice Float?
+  currentValue  Float?
+  warrantyUntil DateTime?
+  vendor        String?
+  invoiceNumber String?
+
+  status    AssetStatus    @default(REGISTERED)
+  condition AssetCondition @default(GOOD)
+  location  String?
+  floor     String?
+  room      String?
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  branchId       String?
+  branch         Branch?      @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  departmentId   String?
+  department     Department?  @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  createdById    String
+  createdBy      User         @relation("AssetCreator", fields: [createdById], references: [id])
+
+  assignments AssetAssignment[]
+  maintenance MaintenanceRecord[]
+  auditLogs   AuditLog[]
+  documents   AssetDocument[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@index([organizationId])
+  @@index([status])
+  @@index([category])
+  @@index([branchId])
+  @@index([departmentId])
+  @@map("assets")
+}
+
+model AssetAssignment {
+  id String @id @default(cuid())
+
+  assignedToUserId       String?
+  assignedToUser         User?       @relation("AssignmentUser", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+  assignedToDepartmentId String?
+  assignedToDepartment   Department? @relation(fields: [assignedToDepartmentId], references: [id], onDelete: SetNull)
+  assignedToBranchId     String?
+  assignedToBranch       Branch?     @relation(fields: [assignedToBranchId], references: [id], onDelete: SetNull)
+
+  assetId    String
+  asset      Asset  @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  assignedBy String
+  assignedByUser User @relation("AssignmentCreator", fields: [assignedBy], references: [id])
+
+  assignedAt       DateTime         @default(now())
+  expectedReturnAt DateTime?
+  returnedAt       DateTime?
+  status           AssignmentStatus @default(ACTIVE)
+  notes            String?
+
+  @@index([assetId])
+  @@index([assignedToUserId])
+  @@index([status])
+  @@map("asset_assignments")
+}
+
+model MaintenanceRecord {
+  id      String @id @default(cuid())
+  assetId String
+  asset   Asset  @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  maintenanceType   MaintenanceType
+  description       String
+  performedBy       String?
+  cost              Float?
+  performedAt       DateTime
+  completedAt       DateTime?
+  nextMaintenanceAt DateTime?
+  status            MaintenanceStatus @default(SCHEDULED)
+  notes             String?
+
+  documents AssetDocument[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([assetId])
+  @@index([status])
+  @@map("maintenance_records")
+}
+
+model AuditLog {
+  id String @id @default(cuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  action     AuditAction
+  entityType String
+  entityId   String
+
+  oldValues Json?
+  newValues Json?
+  changes   String?
+
+  ipAddress String?
+  userAgent String?
+
+  createdAt DateTime @default(now())
+
+  assetId String?
+  asset   Asset?  @relation(fields: [assetId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId])
+  @@index([userId])
+  @@index([createdAt])
+  @@index([action])
+  @@map("audit_logs")
+}
+
+model AssetDocument {
+  id      String @id @default(cuid())
+  assetId String
+  asset   Asset  @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  maintenanceId String?
+  maintenance   MaintenanceRecord? @relation(fields: [maintenanceId], references: [id], onDelete: SetNull)
+
+  name       String
+  type       String
+  url        String
+  mimeType   String
+  size       Int
+  uploadedById String
+  uploadedBy   User @relation(fields: [uploadedById], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@index([assetId])
+  @@map("asset_documents")
+}
